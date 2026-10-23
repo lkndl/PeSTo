@@ -39,6 +39,19 @@ source pesto/bin/activate
 pip install -r requirements.txt
 ```
 
+### Using uv
+[uv](https://docs.astral.sh/uv/) resolves the dependencies from [pyproject.toml](pyproject.toml),
+creates the environment and installs the project itself, which provides the `pesto` command.
+```
+uv sync
+uv run pesto --help
+```
+The built package bundles the four pre-trained models (`src/weights` is a link to
+`model/save`), so `pesto` also runs where the repository is not available. Only the few
+dependencies needed to predict are required to install it; the ones used by the notebooks,
+the training and the profiling script are in the `notebooks` dependency group, which `uv sync`
+installs by default.
+
 ## Application
 A set a [Jupyter](https://jupyter.org/) notebooks and python scripts are available to apply our trained model. Start a JupyterLab session with:
 ```
@@ -58,6 +71,33 @@ Or in [ChimeraX](https://www.cgl.ucsf.edu/chimerax/) with
 ```
 color bfactor palette "#2B59C3:#D1D1D1:#D7263D" range 0,1
 ```
+
+### Command line
+
+[src/predict.py](src/predict.py) applies a model to PDB and mmCIF files from the command line.
+Installing the project (`uv sync`, or `pip install -e .`) provides it as the `pesto` command,
+which can be called from anywhere. Without installing, run it as a module from this folder.
+
+```
+pesto structure.cif
+pesto some_folder -o results --bfactor all --device cuda
+
+python -m src.predict structure.cif
+```
+
+It writes, next to each input file or into `--out-dir`:
+- `<name>_pesto.pdb` / `<name>_pesto.cif`: a copy of the input with the predictions in the
+  b-factor field. Unlike the notebook, the chain names, residue numbering and insertion codes
+  of the input are kept, so the result can be superposed on the original. Use `--format` to
+  convert between PDB and mmCIF, `--bfactor` to choose which interface type goes into the
+  b-factor field (`protein` by default, `all` writes one file per type).
+- `<name>_pesto.tsv`: one row per residue (`--table-format csv` for comma-separated), with the
+  probability of all interface types predicted by the model in separate columns.
+
+Residues that are not part of the prediction (water, chains dropped by the preprocessing) are
+kept in the structure with a b-factor of 0 and are absent from the table. All chains of one
+input file are predicted together as a single unit, as in the notebook, so supply isolated
+subunits to predict the interfaces of a complex that is already formed.
 
 ## Reproducibility
 

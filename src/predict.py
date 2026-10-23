@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""Apply a trained PeSTo model to PDB/mmCIF files.
+
+Writes the predicted interface probabilities into the b-factor field of a copy
+of the input structure (PDB or mmCIF, chain names, residue numbering and
+insertion codes preserved) and into a per-residue table (TSV/CSV).
+
+All chains found in one input file are predicted together as a single unit,
+like in apply_model.ipynb. Supply isolated subunits if that is what you want
+predictions for.
+"""
+
+import os
+import re
+import sys
+import argparse
+import numpy as np
+import torch as pt
+from glob import glob
+from tqdm import tqdm
+
+import gemmi
+
+from .dataset import collate_batch_features
+from .data_encoding import encode_structure, encode_features
+from .structure import clean_structure, tag_hetatm_chains, split_by_chain
+from .structure import filter_non_atomic_subunits, remove_duplicate_tagged_subunits, concatenate_chains
+
+
+# interface types predicted by the model, in the order of the output channels
+# (see 'r_types' in the model config)
+interface_names = ['protein', 'nucleic', 'ion', 'ligand', 'lipid']
+
+# the trained models are installed with the package as src/weights, which is a link
+# to model/save in the repository, so that both an installed and a cloned PeSTo work
+package_dir = os.path.dirname(os.path.abspath(__file__))
+repo_dir = os.path.dirname(package_dir)
+model_roots = [os.path.join(package_dir, 'weights'), os.path.join(repo_dir, 'model', 'save')]
+model_dirs = {
+    'i_v3_0': "i_v3_0_2021-05-27_14-27",
+    'i_v3_1': "i_v3_1_2021-05-28_12-40",
+    'i_v4_0': "i_v4_0_2021-09-07_11-20",
+    'i_v4_1': "i_v4_1_2021-09-07_11-21",
+}
+
+# structure formats we read and write ('.pdb1', '.pdb2', ... are bioassemblies)
+re_pdb = re.compile(r"\.(pdb|ent)[0-9]*(\.gz)?$", re.IGNORECASE)
+re_cif = re.compile(r"\.(cif|mmcif)(\.gz)?$", re.IGNORECASE)
+
+
+def load_model(model_name, device):
+    # locate model, independently of the working directory
+    for root in model_roots:
+        save_path = os.path.join(root, model_dirs[model_name])
+        model_filepath = os.path.join(save_path, 'model_ckpt.pt')
+        if os.path.isfile(model_filepath):
+            break
+    else:
+        raise FileNotFoundError("no weights for model {} in {}".format(
+            model_name, ' or '.join(model_roots)))
+
+    # load the configuration and architecture stored next to the weights, those
+    # scripts import src.*, which needs the repository itself on the path
+    for path in (repo_dir, save_path):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    from config import config_model
+    from model import Model
+
+    # reload model
+    model = Model(config_model)
+    model.load_state_dict(pt.load(model_filepath, map_location=pt.device("cpu")))
+    model = model.eval().to(device)
+
+    # the v4 models only use the element of each atom, the v3 models use all features
+    all_features = (config_model['em']['N0'] > 30)
+
+    # one output channel per interface type
+    names = interface_names[:config_model['dm']['N2']]
+
+    return model, names, all_features
+
+
+def read_structure(filepath):
+    # read pdb or mmcif
+    if re_cif.search(filepath):
+        doc = gemmi.read_structure(filepath, format=gemmi.CoorFormat.Mmcif)
+    elif re_pdb.search(filepath):
+        doc = gemmi.read_pdb(filepath, max_line_length=80)
+    else:
+        doc = gemmi.read_structure(filepath)
+
+    # altloc memory
+    altloc_l = []
+
+    # data storage
+    atom_element = []
+    atom_name = []
+    atom_xyz = []
+    residue_name = []
+    seq_id = []
+    het_flag = []
+    chain_name = []
+    icodes = []
+
+    # location of every atom in the gemmi structure, to map the predictions back
+    location = []
+
+    # parse structure
+    for mid, model in enumerate(doc):
+        for cid, chain in enumerate(model):
+            for rid, residue in enumerate(chain):
+                for atom in residue:
+                    # altloc check (keep first encountered)
+                    if atom.has_altloc():
+                        key = f"{chain.name}_{residue.seqid.num}_{atom.name}"
+                        if key in altloc_l:
+                            continue
+                        else:
+                            altloc_l.append(key)
+
+                    # store data
+                    atom_element.append(atom.element.name)
+                    atom_name.append(atom.name)
+                    atom_xyz.append([atom.pos.x, atom.pos.y, atom.pos.z])
+                    residue_name.append(residue.name)
+                    seq_id.append(residue.seqid.num)
+                    het_flag.append(residue.het_flag)
+                    chain_name.append(f"{chain.name}:{mid}")
+                    icodes.append(residue.seqid.icode.strip())
+                    location.append([mid, cid, rid])
+
+    # pack data
+    structure = {
+        'xyz': np.array(atom_xyz, dtype=np.float32),
+        'name': np.array(atom_name),
+        'element': np.array(atom_element),
+        'resname': np.array(residue_name),
+        'resid': np.array(seq_id, dtype=np.int32),
+        'het_flag': np.array(het_flag),
+        'chain_name': np.array(chain_name),
+        'icode': np.array(icodes),
+        'location': np.array(location, dtype=np.int32),
+    }
+
+    return doc, structure
+
+
+def preprocess(structure):
+    # process structure
+    structure = clean_structure(structure)
+
+    # update molecules chains
+    structure = tag_hetatm_chains(structure)
+
+    # split structure
+    subunits = split_by_chain(structure)
+
+    # remove non atomic structures
+    subunits = filter_non_atomic_subunits(subunits)
+
+    # remove duplicated molecules and ions
+    subunits = remove_duplicate_tagged_subunits(subunits)
+
+    # concatenate all remaining chains together
+    return concatenate_chains(subunits)
+
+
+def extract_topology(X, num_nn, chunk_size=1024):
+    # same nearest neighbors as src.data_encoding.extract_topology, but without ever
+    # holding the full distance matrix in memory
+    knn = min(num_nn, X.shape[0])
+    ids_topk = pt.zeros((X.shape[0], knn), dtype=pt.long, device=X.device)
+
+    # no distance can be larger than the diagonal of the bounding box
+    d_max = pt.norm(pt.max(X, dim=0).values - pt.min(X, dim=0).values)
+
+    for i in range(0, X.shape[0], chunk_size):
+        # compute distances of the chunk to all atoms
+        D = pt.norm(X[i:i+chunk_size].unsqueeze(1) - X.unsqueeze(0), dim=2)
+
+        # mask self and overlapping atoms
+        D = D + d_max*(D < 1e-2).float()
+
+        # find nearest neighbors
+        ids_topk[i:i+chunk_size] = pt.topk(D, knn, dim=1, largest=False).indices
+
+    return ids_topk
+
+
+def predict(model, structure, device, all_features):
+    # encode structure and features
+    X, M = encode_structure(structure)
+    if all_features:
+        q = pt.cat(encode_features(structure), dim=1)
+    else:
+        q = encode_features(structure)[0]
+
+    # extract topology
+    ids_topk = extract_topology(X, 64)
+
+    # pack data and setup sink (IMPORTANT)
+    X, ids_topk, q, M = collate_batch_features([[X, ids_topk, q, M]])
+
+    # run model
+    with pt.no_grad():
+        z = model(X.to(device), ids_topk.to(device), q.to(device), M.float().to(device))
+        p = pt.sigmoid(z).cpu().numpy()
+
+    # map each atom to its row in the predictions
+    _, ids_res = np.unique(structure['resid'], return_inverse=True)
+
+    return p, ids_res
+
+
+def collect_residues(structure, p, ids_res):
+    # gather the prediction of every residue of the input structure that was kept
+    predictions = {}
+    for (mid, cid, rid), i in zip(structure['location'], ids_res):
+        key = (int(mid), int(cid), int(rid))
+        if key in predictions:
+            predictions[key] = np.maximum(predictions[key], p[i])
+        else:
+            predictions[key] = p[i]
+
+    return predictions
+
+
+def encode_bfactor(doc, predictions, i_type, default=0.0):
+    # store the predictions of one interface type in the b-factor field
+    for mid, model in enumerate(doc):
+        for cid, chain in enumerate(model):
+            for rid, residue in enumerate(chain):
+                p = predictions.get((mid, cid, rid))
+                bf = default if p is None else float(p[i_type])
+                for atom in residue:
+                    atom.b_iso = bf
+
+
+def save_structure(doc, filepath):
+    if re_cif.search(filepath):
+        doc.setup_entities()
+        doc.make_mmcif_document().write_file(filepath)
+    else:
+        doc.write_pdb(filepath)
+
+
+def save_table(doc, predictions, names, filepath):
+    # one row per residue, in the order of the input structure
+    sep = ',' if filepath.endswith('.csv') else '\t'
+    header = ['model', 'chain', 'resid', 'icode', 'resname'] + [f"p_{name}" for name in names]
+
+    with open(filepath, 'w') as fs:
+        fs.write(sep.join(header)+'\n')
+        for mid, model in enumerate(doc):
+            for cid, chain in enumerate(model):
+                for rid, residue in enumerate(chain):
+                    p = predictions.get((mid, cid, rid))
+                    if p is None:
+                        continue
+
+                    row = [
+                        str(mid), chain.name, str(residue.seqid.num),
+                        residue.seqid.icode.strip(), residue.name,
+                    ] + ["{:.4f}".format(v) for v in p]
+                    fs.write(sep.join(row)+'\n')
+
+
+def locate_structures(paths, suffix):
+    # expand directories into the structure files they contain, ignoring our own results
+    filepaths = []
+    for path in paths:
+        if os.path.isdir(path):
+            found = [fp for fp in sorted(glob(os.path.join(path, "*")))
+                     if (re_pdb.search(fp) or re_cif.search(fp)) and (suffix not in os.path.basename(fp))]
+            if len(found) == 0:
+                print(f"WARNING: no structure file found in {path}")
+            filepaths.extend(found)
+        else:
+            filepaths.append(path)
+
+    return filepaths
+
+
+def output_filepath(filepath, out_dir, suffix, extension):
+    # strip the (possibly double) extension of the input
+    name = os.path.basename(filepath)
+    m = re_pdb.search(name) or re_cif.search(name)
+    name = name[:m.start()] if m is not None else os.path.splitext(name)[0]
+
+    # keep the input next to its predictions unless asked otherwise
+    directory = os.path.dirname(os.path.abspath(filepath)) if out_dir is None else out_dir
+
+    return os.path.join(directory, name+suffix+extension)
+
+
+def run(filepath, model, names, all_features, device, args):
+    # read and prepare structure
+    doc, structure = read_structure(filepath)
+    if structure['xyz'].shape[0] == 0:
+        print(f"WARNING: no atom found in {filepath}")
+        return
+
+    structure = preprocess(structure)
+    if structure['xyz'].shape[0] == 0:
+        print(f"WARNING: nothing left to predict on in {filepath}")
+        return
+
+    # the runtime scales with the square of the number of atoms
+    if (args.max_atoms > 0) and (structure['xyz'].shape[0] > args.max_atoms):
+        print("WARNING: {} has {} atoms (--max-atoms is {}), skipped".format(
+            filepath, structure['xyz'].shape[0], args.max_atoms))
+        return
+
+    # run model and gather the predictions per residue of the input structure
+    p, ids_res = predict(model, structure, device, all_features)
+    predictions = collect_residues(structure, p, ids_res)
+
+    # determine output format
+    if args.format == 'same':
+        extension = '.cif' if re_cif.search(filepath) else '.pdb'
+    else:
+        extension = '.'+args.format
+
+    # store the selected interface type(s) in the b-factor field
+    types = names if args.bfactor == 'all' else [args.bfactor]
+    for name in types:
+        suffix = args.suffix if (len(types) == 1) else f"{args.suffix}_{name}"
+        encode_bfactor(doc, predictions, names.index(name))
+        save_structure(doc, output_filepath(filepath, args.out_dir, suffix, extension))
+
+    # store all interface types in a table
+    if not args.no_table:
+        save_table(doc, predictions, names,
+                   output_filepath(filepath, args.out_dir, args.suffix, '.'+args.table_format))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='pesto', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('inputs', nargs='+', help="PDB/mmCIF files, or directories containing them")
+    parser.add_argument('-o', '--out-dir', default=None,
+                        help="where to write the results (default: next to each input file)")
+    parser.add_argument('-m', '--model', default='i_v4_1', choices=sorted(model_dirs),
+                        help="pre-trained model to apply (default: %(default)s)")
+    parser.add_argument('-d', '--device', default='auto', help="cpu, cuda, mps, ... (default: %(default)s)")
+    parser.add_argument('-f', '--format', default='same', choices=['same', 'pdb', 'cif'],
+                        help="format of the output structure (default: %(default)s)")
+    parser.add_argument('-b', '--bfactor', default='protein', choices=interface_names+['all'],
+                        help="interface type to store in the b-factor field, 'all' writes one "
+                             "structure per type (default: %(default)s)")
+    parser.add_argument('-t', '--table-format', default='tsv', choices=['tsv', 'csv'],
+                        help="format of the per-residue table (default: %(default)s)")
+    parser.add_argument('--no-table', action='store_true', help="do not write the per-residue table")
+    parser.add_argument('--suffix', default='_pesto', help="added to the output names (default: %(default)s)")
+    parser.add_argument('--max-atoms', type=int, default=30000,
+                        help="skip structures with more atoms, 0 for no limit (default: %(default)s)")
+    args = parser.parse_args()
+
+    # define device
+    if args.device == 'auto':
+        args.device = 'cuda' if pt.cuda.is_available() else 'cpu'
+    device = pt.device(args.device)
+
+    # load model
+    model, names, all_features = load_model(args.model, device)
+
+    # check that the requested interface type is predicted by this model
+    if (args.bfactor != 'all') and (args.bfactor not in names):
+        parser.error("model {} only predicts {} interfaces".format(args.model, ', '.join(names)))
+
+    # find input structures
+    filepaths = locate_structures(args.inputs, args.suffix)
+
+    # prepare output location
+    if args.out_dir is not None:
+        os.makedirs(args.out_dir, exist_ok=True)
+
+    # run model on all structures
+    for filepath in tqdm(filepaths):
+        try:
+            run(filepath, model, names, all_features, device, args)
+        except Exception as e:
+            print(f"ERROR: {filepath}: {e}")
+
+
+if __name__ == '__main__':
+    main()

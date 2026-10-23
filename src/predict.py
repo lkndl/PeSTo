@@ -3,7 +3,8 @@
 
 Writes the predicted interface probabilities into the b-factor field of a copy
 of the input structure (PDB or mmCIF, chain names, residue numbering and
-insertion codes preserved) and into a per-residue table (TSV/CSV).
+insertion codes preserved), into a per-residue table (TSV/CSV) and, with --json,
+into one residue score track per interface type.
 
 All chains found in one input file are predicted together as a single unit,
 like in apply_model.ipynb. Supply isolated subunits if that is what you want
@@ -13,11 +14,15 @@ predictions for.
 import os
 import re
 import sys
+import json
+import tomllib
 import argparse
 import numpy as np
 import torch as pt
 from glob import glob
 from tqdm import tqdm
+from importlib import metadata
+from datetime import datetime, timezone
 
 import gemmi
 
@@ -30,6 +35,13 @@ from .structure import filter_non_atomic_subunits, remove_duplicate_tagged_subun
 # interface types predicted by the model, in the order of the output channels
 # (see 'r_types' in the model config)
 interface_names = ['protein', 'nucleic', 'ion', 'ligand', 'lipid']
+interface_labels = {
+    'protein': "protein interface",
+    'nucleic': "nucleic acid interface",
+    'ion': "ion binding site",
+    'ligand': "ligand binding site",
+    'lipid': "lipid binding site",
+}
 
 # the trained models are installed with the package as src/weights, which is a link
 # to model/save in the repository, so that both an installed and a cloned PeSTo work
@@ -48,6 +60,18 @@ re_pdb = re.compile(r"\.(pdb|ent)[0-9]*(\.gz)?$", re.IGNORECASE)
 re_cif = re.compile(r"\.(cif|mmcif)(\.gz)?$", re.IGNORECASE)
 
 
+def package_version():
+    # the version of the installed package, or the one of the repository it is run from
+    try:
+        return metadata.version('pesto')
+    except metadata.PackageNotFoundError:
+        try:
+            with open(os.path.join(repo_dir, 'pyproject.toml'), 'rb') as fs:
+                return tomllib.load(fs)['project']['version']
+        except Exception:
+            return "unknown"
+
+
 def load_model(model_name, device):
     # locate model, independently of the working directory
     for root in model_roots:
@@ -64,8 +88,8 @@ def load_model(model_name, device):
     for path in (repo_dir, save_path):
         if path not in sys.path:
             sys.path.insert(0, path)
-    from config import config_model
-    from model import Model
+    from config import config_model  # type: ignore
+    from model import Model  # type: ignore
 
     # reload model
     model = Model(config_model)
@@ -266,20 +290,100 @@ def save_table(doc, predictions, names, filepath):
                     fs.write(sep.join(row)+'\n')
 
 
+def track_residues(doc, source):
+    # the residues a track covers, each with the key of its prediction. The format has no
+    # model dimension, so only the first model is covered and the caller warns about the rest
+    residues = []
+    seen = set()
+    num_duplicates = 0
+    for cid, chain in enumerate(doc[0]):
+        for rid, residue in enumerate(chain):
+            # water is removed before the prediction and was never in scope
+            if residue.is_water():
+                continue
+
+            # the chain names and residue numbers of gemmi are the author ones
+            entry = {'chain': chain.name, 'seq': residue.seqid.num}
+            icode = residue.seqid.icode.strip()
+            if icode:
+                entry['ins_code'] = icode
+
+            # one entry per residue
+            key = (entry['chain'], entry['seq'], icode)
+            if key in seen:
+                num_duplicates += 1
+                continue
+            seen.add(key)
+
+            residues.append((entry, (0, cid, rid)))
+
+    if num_duplicates > 0:
+        print(f"WARNING: {source}: {num_duplicates} residues share their chain, number and "
+              "insertion code with an earlier one and are left out of the tracks")
+
+    return residues
+
+
+def save_track(residues, predictions, names, i_type, model_name, filepath, source):
+    # one residue score track, following the schema in docs/residue-score-track.md of
+    # af-molstar-viewer: one scalar per residue, kept out of the structure file
+    values = []
+    for entry, key in residues:
+        # null, never 0, for the residues dropped by the preprocessing
+        p = predictions.get(key)
+        values.append(dict(entry, value=None if p is None else round(float(p[i_type]), 4)))
+
+    track = {
+        'schema_version': 1,
+        'id': "pesto-{}-{}".format(model_name.replace('_', '-'), names[i_type]),
+        'label': "PeSTo {}".format(interface_labels[names[i_type]]),
+        'index': "auth",
+        'scale': {
+            'kind': "sequential",
+            # a probability, the range is the one of the measure and not of this structure
+            'domain': [0.0, 1.0],
+            'units': "probability",
+        },
+        'provenance': {
+            'tool': "pesto",
+            'tool_version': package_version(),
+            'created': datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'source_structure': source,
+            'parameters': {
+                'model': model_name,
+                'weights': model_dirs[model_name],
+                'interface': names[i_type],
+            },
+        },
+        'values': [],
+    }
+
+    # keep one residue per line, indenting every entry makes the file four times longer
+    entries = ",\n    ".join([json.dumps(entry, ensure_ascii=False) for entry in values])
+    text = json.dumps(track, indent=2, ensure_ascii=False)
+    text = text.replace('"values": []', '"values": [\n    {}\n  ]'.format(entries))
+
+    with open(filepath, 'w') as fs:
+        fs.write(text+'\n')
+
+
 def locate_structures(paths, suffix):
     # expand directories into the structure files they contain, ignoring our own results
     filepaths = []
+    missing = []
     for path in paths:
         if os.path.isdir(path):
             found = [fp for fp in sorted(glob(os.path.join(path, "*")))
                      if (re_pdb.search(fp) or re_cif.search(fp)) and (suffix not in os.path.basename(fp))]
             if len(found) == 0:
-                print(f"WARNING: no structure file found in {path}")
+                print(f"WARNING: no structure file directly in {path}, subfolders are not searched")
             filepaths.extend(found)
-        else:
+        elif os.path.isfile(path):
             filepaths.append(path)
+        else:
+            missing.append(path)
 
-    return filepaths
+    return filepaths, missing
 
 
 def output_filepath(filepath, out_dir, suffix, extension):
@@ -334,6 +438,18 @@ def run(filepath, model, names, all_features, device, args):
         save_table(doc, predictions, names,
                    output_filepath(filepath, args.out_dir, args.suffix, '.'+args.table_format))
 
+    # store each interface type as a residue score track
+    if args.json:
+        if len(doc) > 1:
+            print(f"WARNING: {filepath} has {len(doc)} models, only the first one is in the tracks")
+
+        source = os.path.basename(filepath)
+        residues = track_residues(doc, source)
+        for i_type in range(len(names)):
+            save_track(residues, predictions, names, i_type, args.model,
+                       output_filepath(filepath, args.out_dir, f"{args.suffix}_{names[i_type]}", '.json'),
+                       source)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -352,6 +468,8 @@ def main():
     parser.add_argument('-t', '--table-format', default='tsv', choices=['tsv', 'csv'],
                         help="format of the per-residue table (default: %(default)s)")
     parser.add_argument('--no-table', action='store_true', help="do not write the per-residue table")
+    parser.add_argument('-j', '--json', action='store_true',
+                        help="also write one residue score track per interface type, as JSON")
     parser.add_argument('--suffix', default='_pesto', help="added to the output names (default: %(default)s)")
     parser.add_argument('--max-atoms', type=int, default=30000,
                         help="skip structures with more atoms, 0 for no limit (default: %(default)s)")
@@ -370,7 +488,11 @@ def main():
         parser.error("model {} only predicts {} interfaces".format(args.model, ', '.join(names)))
 
     # find input structures
-    filepaths = locate_structures(args.inputs, args.suffix)
+    filepaths, missing = locate_structures(args.inputs, args.suffix)
+    if len(missing) > 0:
+        parser.error("no such file or directory: {}".format(', '.join(missing)))
+    if len(filepaths) == 0:
+        parser.error("no structure file to predict on")
 
     # prepare output location
     if args.out_dir is not None:

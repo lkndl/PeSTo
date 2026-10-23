@@ -7,20 +7,22 @@ from tqdm import tqdm
 from glob import glob
 from time import time
 
-from src.dataset import StructuresDataset, collate_batch_features
-from src.data_encoding import encode_structure, encode_features, extract_topology
-from src.structure import concatenate_chains
+from .dataset import StructuresDataset, collate_batch_features
+from .data_encoding import encode_structure, encode_features, extract_topology
+from .structure import concatenate_chains
 
 
 # global parameters
-#save_path = "model/save/i_v3_1_2021-05-28_12-40"  # 90
-save_path = "model/save/i_v4_1_2021-09-07_11-21"  # 91
+repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+#save_path = os.path.join(repo_dir, "model/save/i_v3_1_2021-05-28_12-40")  # 90
+save_path = os.path.join(repo_dir, "model/save/i_v4_1_2021-09-07_11-21")  # 91
 #model_filepath = os.path.join(save_path, 'model.pt')
 model_filepath = os.path.join(save_path, 'model_ckpt.pt')
 
-# add module to path
-if save_path not in sys.path:
-    sys.path.insert(0, save_path)
+# add modules to path
+for path in (repo_dir, save_path):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 # load functions
 from config import config_model, config_data
@@ -52,7 +54,7 @@ def profiling():
         model = model.eval().to(device)
 
         # initialize dataset: load directly pdb files
-        pdb_filepaths = glob("data/all_biounits/*/*.pdb*.gz")
+        pdb_filepaths = glob(os.path.join(repo_dir, "data/all_biounits/*/*.pdb*.gz"))
         dataset = StructuresDataset(pdb_filepaths)
 
         # debug print
@@ -119,7 +121,8 @@ def profiling():
                         })
 
         # save profiling to csv
-        pd.DataFrame(profile).to_csv("results/interface_ppi_{}_profiling.csv".format(device_name), index=False)
+        pd.DataFrame(profile).to_csv(os.path.join(
+            repo_dir, "results/interface_ppi_{}_profiling.csv".format(device_name)), index=False)
 
 
 if __name__ == '__main__':

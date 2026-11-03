@@ -268,7 +268,7 @@ def save_table(doc, predictions, names, filepath):
     sep = ',' if filepath.endswith('.csv') else '\t'
     header = ['model', 'chain', 'resid', 'icode', 'resname'] + [f"p_{name}" for name in names]
 
-    with open(filepath, 'w') as fs:
+    with open(filepath, 'w', encoding='utf-8') as fs:
         fs.write(sep.join(header)+'\n')
         for mid, model in enumerate(doc):
             for cid, chain in enumerate(model):
@@ -338,6 +338,8 @@ def save_track(residues, predictions, names, i_type, model_name, filepath, sourc
             'domain': [0.0, 1.0],
             'units': "probability",
         },
+        # the colour the spec assigns to PeSTo, light to dark so that 0 is the light end
+        'palette': {'name': "greens"},
         'provenance': {
             'tool': "pesto",
             'tool_version': package_version(),
@@ -357,7 +359,7 @@ def save_track(residues, predictions, names, i_type, model_name, filepath, sourc
     text = json.dumps(track, indent=2, ensure_ascii=False)
     text = text.replace('"values": []', '"values": [\n    {}\n  ]'.format(entries))
 
-    with open(filepath, 'w') as fs:
+    with open(filepath, 'w', encoding='utf-8') as fs:
         fs.write(text+'\n')
 
 
@@ -396,19 +398,16 @@ def run(filepath, model, names, all_features, device, args):
     # read and prepare structure
     doc, structure = read_structure(filepath)
     if structure['xyz'].shape[0] == 0:
-        print(f"WARNING: no atom found in {filepath}")
-        return
+        raise ValueError("no atom found")
 
     structure = preprocess(structure)
     if structure['xyz'].shape[0] == 0:
-        print(f"WARNING: nothing left to predict on in {filepath}")
-        return
+        raise ValueError("nothing left to predict on")
 
     # the runtime scales with the square of the number of atoms
     if (args.max_atoms > 0) and (structure['xyz'].shape[0] > args.max_atoms):
-        print("WARNING: {} has {} atoms (--max-atoms is {}), skipped".format(
-            filepath, structure['xyz'].shape[0], args.max_atoms))
-        return
+        raise ValueError("{} atoms (--max-atoms is {}), skipped".format(
+            structure['xyz'].shape[0], args.max_atoms))
 
     # run model and gather the predictions per residue of the input structure
     p, ids_res = predict(model, structure, device, all_features)
@@ -492,12 +491,19 @@ def main():
     if args.out_dir is not None:
         os.makedirs(args.out_dir, exist_ok=True)
 
-    # run model on all structures
+    # run model on all structures, a failed one does not stop the others
+    failed = []
     for filepath in tqdm(filepaths):
         try:
             run(filepath, model, names, all_features, device, args)
         except Exception as e:
-            print(f"ERROR: {filepath}: {e}")
+            print(f"ERROR: {filepath}: {e}", file=sys.stderr)
+            failed.append(filepath)
+
+    # so that a calling script or a scheduler can tell
+    if len(failed) > 0:
+        print(f"ERROR: {len(failed)} of {len(filepaths)} inputs failed", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -95,6 +95,10 @@ pesto structure.cif
 pesto some_folder -o results --bfactor all --device cuda
 ```
 
+An input that cannot be predicted on (unreadable, no atoms left after the preprocessing, more
+than `--max-atoms` atoms) is reported and the others are still predicted, but the run then exits
+with status 1, so that a calling script or a scheduler can tell.
+
 It writes, next to each input file or into `--out-dir`:
 - `<name>_pesto.pdb` / `<name>_pesto.cif`: a copy of the input with the predictions in the
   b-factor field. Unlike the notebook, the chain names, residue numbering and insertion codes
@@ -108,7 +112,8 @@ It writes, next to each input file or into `--out-dir`:
   scores alone, to be loaded next to the unmodified structure rather than through the b-factor
   field. Residue numbers are the author ones (`"index": "auth"`), residues dropped by the
   preprocessing have a `null` score rather than 0, and water is left out. The format has no model
-  dimension, so only the first model of a multi-model file ends up in the tracks.
+  dimension, so only the first model of a multi-model file ends up in the tracks. The tracks name
+  the `greens` palette, the one the format assigns to PeSTo.
 
 Residues that are not part of the prediction (water, chains dropped by the preprocessing) are
 kept in the structure with a b-factor of 0 and are absent from the table. All chains of one

@@ -41,3 +41,7 @@ Windows, and what to keep in mind when changing it.
   tracked by git into the sdist, about 900 MB of examples and data.
 - `CLoNe` must not be a submodule without a URL in `.gitmodules`: uv runs
   `git submodule update --init` on every git install, which then fails.
+- No tracked path may hold a character Windows forbids in file names (`<>:"|?*\`). Git
+  for Windows then refuses to check out the commit at all, sparse or not, so neither CI
+  nor `uv tool install git+…` work there. The examples in `pdbs_test/` had a `:` from
+  the dataset keys (`A:0`); the benchmark notebook now writes it as `_`.

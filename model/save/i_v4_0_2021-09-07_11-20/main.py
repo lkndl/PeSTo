@@ -5,11 +5,11 @@ import torch as pt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.logger import Logger
-from src.scoring import bc_scoring, bc_score_names, nanmean
+from pesto.logger import Logger
+from pesto.scoring import bc_scoring, bc_score_names, nanmean
 from config import config_data, config_model, config_runtime
 from data_handler import Dataset, collate_batch_data
-from src.dataset import select_by_sid, select_by_max_ba, select_by_interface_types
+from pesto.dataset import select_by_sid, select_by_max_ba, select_by_interface_types
 from model import Model
 
 

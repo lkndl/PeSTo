@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.structure import atom_select
+from pesto.structure import atom_select
 from structures_store import StructuresStoreDataset, h5_store_structure
 
 

@@ -24,7 +24,7 @@ conda activate pesto
 Or installing manually de dependencies
 
 ```
-conda create -n pesto python=3.9
+conda create -n pesto python=3.11
 conda activate pesto
 conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
 conda install numpy scipy pandas matplotlib scikit-learn h5py tqdm
@@ -39,6 +39,9 @@ source pesto/bin/activate
 pip install -r requirements.txt
 ```
 
+Either way, also install the project itself with `pip install -e . --no-deps`: the notebooks
+and scripts import the code as the `pesto` package, which lives in `src/pesto`.
+
 ### Using uv
 [uv](https://docs.astral.sh/uv/) resolves the dependencies from [pyproject.toml](pyproject.toml),
 creates the environment and installs the project itself, which provides the `pesto` command.
@@ -46,11 +49,20 @@ creates the environment and installs the project itself, which provides the `pes
 uv sync
 uv run pesto --help
 ```
-The built package bundles the four pre-trained models (`src/weights` is a link to
-`model/save`), so `pesto` also runs where the repository is not available. Only the few
-dependencies needed to predict are required to install it; the ones used by the notebooks,
-the training and the profiling script are in the `notebooks` dependency group, which `uv sync`
-installs by default.
+A plain `uv sync` installs only what is needed to predict. The notebooks, the training and the
+profiling script need the `notebooks` dependency group as well: `uv sync --group notebooks`.
+
+To install only the command, without cloning, use a tag:
+```
+uv tool install git+https://github.com/lkndl/PeSTo@<tag>
+```
+The package bundles the four pre-trained models in `src/pesto/weights`, each checkpoint with
+the `config.py` and `model.py` it was trained with, so `pesto` runs where the repository is not
+available. The rest of each training run stays in `model/save`. Its version comes from the git tags (`v0.2.0`
+gives `0.2.0`, a later commit `0.2.1.devN+g<hash>`) and ends up in the `provenance` of every
+track. On Linux, uv installs the CPU build of PyTorch, which is a fraction of the size of the
+CUDA one from PyPI; `--device cuda` needs a CUDA build of PyTorch installed in the same
+environment.
 
 ## Application
 A set a [Jupyter](https://jupyter.org/) notebooks and python scripts are available to apply our trained model. Start a JupyterLab session with:
@@ -74,15 +86,13 @@ color bfactor palette "#2B59C3:#D1D1D1:#D7263D" range 0,1
 
 ### Command line
 
-[src/predict.py](src/predict.py) applies a model to PDB and mmCIF files from the command line.
-Installing the project (`uv sync`, or `pip install -e .`) provides it as the `pesto` command,
-which can be called from anywhere. Without installing, run it as a module from this folder.
+[src/pesto/predict.py](src/pesto/predict.py) applies a model to PDB and mmCIF files from the
+command line. Installing the project (`uv sync`, `pip install -e .` or `uv tool install`, see
+above) provides it as the `pesto` command, which can be called from anywhere.
 
 ```
 pesto structure.cif
 pesto some_folder -o results --bfactor all --device cuda
-
-python -m src.predict structure.cif
 ```
 
 It writes, next to each input file or into `--out-dir`:
@@ -117,7 +127,7 @@ The `model` folder contains the scripts to train the model as well as the select
 
 ### MD analysis
 
-Scripts and functions to perform predictions and analysis on MD are found in the `md_analysis` folder. Molecular dynamics are loaded using [MDTraj](https://www.mdtraj.org/). An utility tool called `data_manager` was developed to easily locate simulations within a defined tree-folder structure. We also developed analysis tools based on MDTraj (`mdtraj_utils`).
+Scripts and functions to perform predictions and analysis on MD are found in the `md_analysis` folder. Molecular dynamics are loaded using [MDTraj](https://www.mdtraj.org/). An utility tool called `data_manager` was developed to easily locate simulations within a defined tree-folder structure. We also developed analysis tools based on MDTraj (`mdtraj_utils`). The clustering uses [CLoNe](https://github.com/LBM-EPFL/CLoNe), which is not part of this repository: clone it into the `CLoNe` folder.
 
 ### Interfaceome
 

@@ -5,7 +5,7 @@ import mdtraj as md
 from tqdm import tqdm
 from multiprocessing import Pool
 
-from src.structure import concatenate_chains
+from pesto.structure import concatenate_chains
 from structures_store import StructuresStoreDataset
 
 

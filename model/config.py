@@ -1,6 +1,6 @@
 # import sys
 from datetime import datetime
-from src.data_encoding import categ_to_resnames
+from pesto.data_encoding import categ_to_resnames
 
 
 config_data = {

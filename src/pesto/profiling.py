@@ -13,14 +13,17 @@ from .structure import concatenate_chains
 
 
 # global parameters
-repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-#save_path = os.path.join(repo_dir, "model/save/i_v3_1_2021-05-28_12-40")  # 90
-save_path = os.path.join(repo_dir, "model/save/i_v4_1_2021-09-07_11-21")  # 91
+package_dir = os.path.dirname(os.path.abspath(__file__))
+repo_dir = os.path.dirname(os.path.dirname(package_dir))
+#run_name = "i_v3_1_2021-05-28_12-40"  # 90
+run_name = "i_v4_1_2021-09-07_11-21"  # 91
+weights_path = os.path.join(package_dir, "weights", run_name)
+save_path = os.path.join(repo_dir, "model", "save", run_name)
 #model_filepath = os.path.join(save_path, 'model.pt')
-model_filepath = os.path.join(save_path, 'model_ckpt.pt')
+model_filepath = os.path.join(weights_path, 'model_ckpt.pt')
 
-# add modules to path
-for path in (repo_dir, save_path):
+# add modules to path, data_handler stays with the training run
+for path in (save_path, weights_path):
     if path not in sys.path:
         sys.path.insert(0, path)
 

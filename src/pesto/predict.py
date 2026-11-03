@@ -15,8 +15,8 @@ import os
 import re
 import sys
 import json
-import tomllib
 import argparse
+import importlib.util
 import numpy as np
 import torch as pt
 from glob import glob
@@ -43,11 +43,8 @@ interface_labels = {
     'lipid': "lipid binding site",
 }
 
-# the trained models are installed with the package as src/weights, which is a link
-# to model/save in the repository, so that both an installed and a cloned PeSTo work
-package_dir = os.path.dirname(os.path.abspath(__file__))
-repo_dir = os.path.dirname(package_dir)
-model_roots = [os.path.join(package_dir, 'weights'), os.path.join(repo_dir, 'model', 'save')]
+# the trained models, each with the configuration and architecture it was trained with
+weights_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weights')
 model_dirs = {
     'i_v3_0': "i_v3_0_2021-05-27_14-27",
     'i_v3_1': "i_v3_1_2021-05-28_12-40",
@@ -61,35 +58,32 @@ re_cif = re.compile(r"\.(cif|mmcif)(\.gz)?$", re.IGNORECASE)
 
 
 def package_version():
-    # the version of the installed package, or the one of the repository it is run from
+    # the version of the installed package, derived from git when it was built
     try:
         return metadata.version('pesto')
     except metadata.PackageNotFoundError:
-        try:
-            with open(os.path.join(repo_dir, 'pyproject.toml'), 'rb') as fs:
-                return tomllib.load(fs)['project']['version']
-        except Exception:
-            return "unknown"
+        return "unknown"
+
+
+def load_module(filepath, name):
+    # import a script by its path, under a name of its own, without touching sys.path
+    spec = importlib.util.spec_from_file_location(name, filepath)
+    assert (spec is not None) and (spec.loader is not None)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_model(model_name, device):
     # locate model, independently of the working directory
-    for root in model_roots:
-        save_path = os.path.join(root, model_dirs[model_name])
-        model_filepath = os.path.join(save_path, 'model_ckpt.pt')
-        if os.path.isfile(model_filepath):
-            break
-    else:
-        raise FileNotFoundError("no weights for model {} in {}".format(
-            model_name, ' or '.join(model_roots)))
+    save_path = os.path.join(weights_dir, model_dirs[model_name])
+    model_filepath = os.path.join(save_path, 'model_ckpt.pt')
+    if not os.path.isfile(model_filepath):
+        raise FileNotFoundError(f"no weights for model {model_name} in {save_path}")
 
-    # load the configuration and architecture stored next to the weights, those
-    # scripts import src.*, which needs the repository itself on the path
-    for path in (repo_dir, save_path):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    from config import config_model  # type: ignore
-    from model import Model  # type: ignore
+    # load the configuration and architecture stored next to the weights
+    config_model = load_module(os.path.join(save_path, 'config.py'), f"pesto_{model_name}_config").config_model
+    Model = load_module(os.path.join(save_path, 'model.py'), f"pesto_{model_name}_model").Model
 
     # reload model
     model = Model(config_model)
@@ -191,7 +185,7 @@ def preprocess(structure):
 
 
 def extract_topology(X, num_nn, chunk_size=1024):
-    # same nearest neighbors as src.data_encoding.extract_topology, but without ever
+    # same nearest neighbors as pesto.data_encoding.extract_topology, but without ever
     # holding the full distance matrix in memory
     knn = min(num_nn, X.shape[0])
     ids_topk = pt.zeros((X.shape[0], knn), dtype=pt.long, device=X.device)

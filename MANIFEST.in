@@ -1,0 +1,6 @@
+# keep the sdist to the package, setuptools-scm would add every file tracked by git
+exclude *
+recursive-exclude * *
+include pyproject.toml README.md LICENSE MANIFEST.in
+graft src/pesto
+global-exclude __pycache__ *.py[cod]

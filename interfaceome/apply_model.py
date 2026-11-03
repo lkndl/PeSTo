@@ -4,9 +4,9 @@ import h5py
 import torch as pt
 from tqdm import tqdm
 
-from src.dataset import collate_batch_features
-from src.data_encoding import encode_structure, encode_features, extract_topology
-from src.structure import concatenate_chains
+from pesto.dataset import collate_batch_features
+from pesto.data_encoding import encode_structure, encode_features, extract_topology
+from pesto.structure import concatenate_chains
 from structures_store import StructuresStoreDataset
 
 
@@ -16,10 +16,10 @@ def main():
     output_filepath = "datasets/predicted_interfaces.h5"
 
     # model parameters
-    # save_path = "model/save/i_v3_0_2021-05-27_14-27"  # 89
-    # save_path = "model/save/i_v3_1_2021-05-28_12-40"  # 90
-    # save_path = "model/save/i_v4_0_2021-09-07_11-20"  # 89
-    save_path = "model/save/i_v4_1_2021-09-07_11-21"  # 91
+    # save_path = "pesto/weights/i_v3_0_2021-05-27_14-27"  # 89
+    # save_path = "pesto/weights/i_v3_1_2021-05-28_12-40"  # 90
+    # save_path = "pesto/weights/i_v4_0_2021-09-07_11-20"  # 89
+    save_path = "pesto/weights/i_v4_1_2021-09-07_11-21"  # 91
 
     # select saved model
     model_filepath = os.path.join(save_path, 'model_ckpt.pt')

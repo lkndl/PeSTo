@@ -3,7 +3,7 @@ import numpy as np
 import torch as pt
 
 
-from src.dataset import load_sparse_mask, collate_batch_features
+from pesto.dataset import load_sparse_mask, collate_batch_features
 
 
 def load_interface_labels(hgrp, t0, t1_l):

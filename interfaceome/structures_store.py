@@ -3,8 +3,8 @@ import numpy as np
 import torch as pt
 from tqdm import tqdm
 
-from src.structure_io import read_pdb
-from src.structure import clean_structure, tag_hetatm_chains, split_by_chain, filter_non_atomic_subunits, remove_duplicate_tagged_subunits
+from pesto.structure_io import read_pdb
+from pesto.structure import clean_structure, tag_hetatm_chains, split_by_chain, filter_non_atomic_subunits, remove_duplicate_tagged_subunits
 
 
 def h5_store_structure(hf, structure):

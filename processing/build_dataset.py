@@ -6,9 +6,9 @@ import torch as pt
 from glob import glob
 from tqdm import tqdm
 
-from src.structure import clean_structure, tag_hetatm_chains, split_by_chain, filter_non_atomic_subunits, remove_duplicate_tagged_subunits
-from src.data_encoding import config_encoding, encode_structure, encode_features, extract_topology, extract_all_contacts
-from src.dataset import StructuresDataset, save_data
+from pesto.structure import clean_structure, tag_hetatm_chains, split_by_chain, filter_non_atomic_subunits, remove_duplicate_tagged_subunits
+from pesto.data_encoding import config_encoding, encode_structure, encode_features, extract_topology, extract_all_contacts
+from pesto.dataset import StructuresDataset, save_data
 
 pt.multiprocessing.set_sharing_strategy('file_system')
 

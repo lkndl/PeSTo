@@ -1,11 +1,11 @@
-import sys
+# import sys
 from datetime import datetime
-from src.data_encoding import categ_to_resnames
+from pesto.data_encoding import categ_to_resnames
 
 
 config_data = {
-    # 'dataset_filepath': "datasets/contacts_rr5A_64nn_8192.h5",
-    'dataset_filepath': "/tmp/"+sys.argv[-1]+"/contacts_rr5A_64nn_8192.h5",
+    'dataset_filepath': "datasets/contacts_rr5A_64nn_8192.h5",
+    # 'dataset_filepath': "/tmp/"+sys.argv[-1]+"/contacts_rr5A_64nn_8192.h5",
     'train_selection_filepath': "datasets/subunits_train_set.txt",
     'test_selection_filepath': "datasets/subunits_test_set.txt",
     'max_ba': 1,
@@ -23,12 +23,20 @@ config_data = {
 }
 
 config_model = {
-    "em": {'N0': 123, 'N1': 32},
+    "em": {'N0': 30, 'N1': 32},
     "sum": [
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 8},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 16},
@@ -37,6 +45,14 @@ config_model = {
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 32},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
+        {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
         {'Ns': 32, 'Nh': 2, 'Nk':3, 'nn': 64},
@@ -50,7 +66,7 @@ config_model = {
 tag = datetime.now().strftime("_%Y-%m-%d_%H-%M")
 
 config_runtime = {
-    'run_name': 'i_v3_0'+tag,
+    'run_name': 'i_v4_1'+tag,
     'output_dir': 'save',
     'reload': True,
     'device': 'cuda',

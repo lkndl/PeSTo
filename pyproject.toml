@@ -1,9 +1,10 @@
 [project]
 name = "pesto"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Parameter-free geometric deep learning prediction of protein binding interfaces"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
+# lower bounds are needed, `uv tool install` resolves from here and not from uv.lock
 dependencies = [
     "gemmi>=0.7.5",
     "numpy>=2.4.3",
@@ -23,22 +24,39 @@ notebooks = [
     "tensorboard>=2.20.0",
 ]
 
-[tool.uv]
-default-groups = ["notebooks"]
-
 [project.scripts]
-pesto = "src.predict:main"
+pesto = "pesto.predict:main"
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["src"]
+package-dir = { "" = "src" }
+packages = ["pesto"]
+# setuptools-scm would otherwise add every file tracked by git below src/pesto
+include-package-data = false
 
 [tool.setuptools.package-data]
-src = [
+pesto = [
     "weights/*/model_ckpt.pt",
     "weights/*/config.py",
     "weights/*/model.py",
 ]
+
+# the version comes from git: tag v0.2.0 gives 0.2.0, a later commit 0.2.1.devN+g<hash>
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
+[tool.uv]
+# rebuild on a new commit or tag, or the version in the metadata goes stale
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
+# torch from PyPI brings several GB of CUDA libraries on Linux, the CPU is enough here
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

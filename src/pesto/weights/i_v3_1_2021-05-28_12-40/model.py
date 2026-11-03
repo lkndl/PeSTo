@@ -1,6 +1,6 @@
 import torch as pt
 
-from src.model_operations import StateUpdateLayer, StatePoolLayer, unpack_state_features
+from pesto.model_operations import StateUpdateLayer, StatePoolLayer, unpack_state_features
 
 
 class Model(pt.nn.Module):

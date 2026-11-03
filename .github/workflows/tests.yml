@@ -1,0 +1,50 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.13"]
+        include:
+          # the lowest version in requires-python
+          - os: ubuntu-latest
+            python: "3.11"
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }}, Python ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # all tags for setuptools-scm, but only the files of the package and its test
+          fetch-depth: 0
+          sparse-checkout: |
+            src
+            tests
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      - name: Smoke test
+        run: uv run --locked pytest -v
+
+      # a link to the weights would be a small text file in a checkout without symlinks
+      - name: Wheel holds the weights
+        shell: bash
+        run: |
+          uv build --wheel --out-dir dist
+          uv run --no-project python - <<'EOF'
+          import glob, zipfile
+          wheel = zipfile.ZipFile(glob.glob("dist/*.whl")[0])
+          ckpts = [info for info in wheel.infolist() if info.filename.endswith("model_ckpt.pt")]
+          for info in ckpts:
+              print(info.filename, info.file_size)
+          assert len(ckpts) == 4 and all(info.file_size > 2**20 for info in ckpts)
+          EOF

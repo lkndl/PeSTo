@@ -120,6 +120,12 @@ kept in the structure with a b-factor of 0 and are absent from the table. All ch
 input file are predicted together as a single unit, as in the notebook, so supply isolated
 subunits to predict the interfaces of a complex that is already formed.
 
+### Tests
+
+`uv run pytest` runs `pesto -j` on PDB entry 2PTC and checks the tracks it writes. The entry's
+author chains (E, I) differ from its label chains (A, B) and it has insertion codes, so a track
+on the wrong numbering fails. GitHub Actions runs it on Linux, macOS and Windows.
+
 ## Reproducibility
 
 We provide all the Jupyter notebooks and scripts used to obtain and process the data, train and evaluate the model. The latest model (`i_v4_1`) is used for the benchmarks and results shown in the paper.

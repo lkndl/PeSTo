@@ -12,7 +12,8 @@ Windows, and what to keep in mind when changing it.
   in `model/save/<run>/`, so the notebooks that build a `Dataset` put both folders on
   `sys.path`, and `md_analysis/save` links to `src/pesto/weights`.
 - They are real files, not a link: a checkout without symlink support turns a link into a
-  small text file, and the wheel then has no weights.
+  small text file, and the wheel then has no weights. CI checks that the wheel holds all
+  four checkpoints.
 - `predict.py` loads `config.py` and `model.py` by path with `importlib`, under a module
   name of their own, and never puts the weights directory on `sys.path`.
 

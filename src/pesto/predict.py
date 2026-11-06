@@ -14,7 +14,9 @@ predictions for.
 import os
 import re
 import sys
+import gzip
 import json
+import hashlib
 import argparse
 import importlib.util
 import numpy as np
@@ -296,14 +298,15 @@ def track_residues(doc, source):
             if residue.is_water():
                 continue
 
-            # the chain names and residue numbers of gemmi are the author ones
-            entry = {'chain': chain.name, 'seq': residue.seqid.num}
+            # the chain names and residue numbers of gemmi are the author ones, its residue
+            # name is auth_comp_id where an mmCIF file has one
+            entry = {'chain': chain.name, 'idx': residue.seqid.num, 'res_name': residue.name}
             icode = residue.seqid.icode.strip()
             if icode:
                 entry['ins_code'] = icode
 
             # one entry per residue
-            key = (entry['chain'], entry['seq'], icode)
+            key = (entry['chain'], entry['idx'], icode)
             if key in seen:
                 num_duplicates += 1
                 continue
@@ -318,7 +321,20 @@ def track_residues(doc, source):
     return residues
 
 
-def save_track(residues, predictions, names, i_type, model_name, filepath, source):
+def sha1sum(filepath, chunk_size=2**20):
+    # the SHA-1 of the uncompressed bytes, a gzipped file is told by its magic bytes
+    with open(filepath, 'rb') as fs:
+        gzipped = (fs.read(2) == b'\x1f\x8b')
+
+    digest = hashlib.sha1()
+    with (gzip.open if gzipped else open)(filepath, 'rb') as fs:
+        for chunk in iter(lambda: fs.read(chunk_size), b''):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def save_track(residues, predictions, names, i_type, model_name, filepath, source, source_sha1sum):
     # one residue score track, following the schema in docs/residue-score-track.md of
     # af-molstar-viewer: one scalar per residue, kept out of the structure file
     values = []
@@ -328,7 +344,7 @@ def save_track(residues, predictions, names, i_type, model_name, filepath, sourc
         values.append(dict(entry, value=None if p is None else round(float(p[i_type]), 4)))
 
     track = {
-        'schema_version': 1,
+        'schema_version': 2,
         'id': "pesto-{}-{}".format(model_name.replace('_', '-'), names[i_type]),
         'label': "PeSTo {}".format(interface_labels[names[i_type]]),
         'index': "auth",
@@ -345,6 +361,7 @@ def save_track(residues, predictions, names, i_type, model_name, filepath, sourc
             'tool_version': package_version(),
             'created': datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             'source_structure': source,
+            'source_sha1sum': source_sha1sum,
             'parameters': {
                 'model': model_name,
                 'weights': model_dirs[model_name],
@@ -437,11 +454,12 @@ def run(filepath, model, names, all_features, device, args):
             print(f"WARNING: {filepath} has {len(doc)} models, only the first one is in the tracks")
 
         source = os.path.basename(filepath)
+        source_sha1sum = sha1sum(filepath)
         residues = track_residues(doc, source)
         for i_type in range(len(names)):
             save_track(residues, predictions, names, i_type, args.model,
                        output_filepath(filepath, args.out_dir, f"{args.suffix}_{names[i_type]}", '.json'),
-                       source)
+                       source, source_sha1sum)
 
 
 def main():

@@ -107,13 +107,16 @@ It writes, next to each input file or into `--out-dir`:
   b-factor field (`protein` by default, `all` writes one file per type).
 - `<name>_pesto.tsv`: one row per residue (`--table-format csv` for comma-separated), with the
   probability of all interface types predicted by the model in separate columns.
-- `<name>_pesto_<type>.json`, with `--json`: one residue score track per interface type, in the
-  format read by the af-molstar-viewer (`docs/residue-score-track.md` there). The track holds the
-  scores alone, to be loaded next to the unmodified structure rather than through the b-factor
-  field. Residue numbers are the author ones (`"index": "auth"`), residues dropped by the
-  preprocessing have a `null` score rather than 0, and water is left out. The format has no model
-  dimension, so only the first model of a multi-model file ends up in the tracks. The tracks name
-  the `greens` palette, the one the format assigns to PeSTo.
+- `<name>_pesto_<type>.json`, with `--json`: one residue score track per interface type, in
+  version 2 of the format read by the af-molstar-viewer (`docs/residue-score-track.md` there). The
+  track holds the scores alone, to be loaded next to the unmodified structure rather than through
+  the b-factor field. Residue numbers are the author ones (`"index": "auth"`), each entry names its
+  residue as the input file does (`res_name`, such as `LYS`), residues dropped by the
+  preprocessing have a `null` score rather than 0, and water is left out. The provenance holds the
+  file name of the input and the SHA-1 of its bytes, uncompressed for a gzipped input
+  (`source_sha1sum`). The format has no model dimension, so only the first model of a multi-model
+  file ends up in the tracks. The tracks name the `greens` palette, the one the format assigns to
+  PeSTo.
 
 Residues that are not part of the prediction (water, chains dropped by the preprocessing) are
 kept in the structure with a b-factor of 0 and are absent from the table. All chains of one

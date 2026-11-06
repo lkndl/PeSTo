@@ -2,12 +2,16 @@
 
 import os
 import sys
+import gzip
 import json
 import shutil
+import hashlib
 import subprocess
 
 import gemmi
 import pytest
+
+from pesto.predict import sha1sum
 
 
 fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', '2ptc.cif')
@@ -32,6 +36,15 @@ def author_residues():
             for chain in st[0] for residue in chain if not residue.is_water()}
 
 
+def residue_names():
+    # label_comp_id by author chain, number and insertion code of the first model, read from
+    # the mmCIF table itself rather than through a gemmi structure as pesto does
+    table = gemmi.cif.read(fixture).sole_block().find('_atom_site.', [
+        'pdbx_PDB_model_num', 'auth_asym_id', 'auth_seq_id', 'pdbx_PDB_ins_code', 'label_comp_id'])
+    return {(row.str(1), int(row.str(2)), row.str(3)): row.str(4)
+            for row in table if row.str(0) == table[0].str(0)}
+
+
 def test_fixture_chains_differ():
     # the test is only meaningful if author and label chains differ
     st = gemmi.read_structure(fixture)
@@ -45,7 +58,7 @@ def test_track(out_dir, name):
         track = json.load(fs)
 
     # required fields and the scale of a probability
-    assert track['schema_version'] == 1
+    assert track['schema_version'] == 2
     assert track['id'] == f"pesto-i-v4-1-{name}"
     assert track['label']
     assert track['index'] == "auth"
@@ -55,16 +68,20 @@ def test_track(out_dir, name):
     assert track['provenance']['tool'] == "pesto"
     assert track['provenance']['tool_version'] not in ("", "unknown")
     assert track['provenance']['source_structure'] == "2ptc.cif"
+    with open(fixture, 'rb') as fs:
+        assert track['provenance']['source_sha1sum'] == hashlib.sha1(fs.read()).hexdigest()
     assert 'structure_ref' not in track
 
-    # one entry per residue, a probability or null
+    # one entry per residue, named as in the file, a probability or null
+    names = residue_names()
     keys = []
     for entry in track['values']:
-        assert set(entry) <= {'chain', 'seq', 'ins_code', 'value'}
-        assert isinstance(entry['seq'], int)
+        assert set(entry) <= {'chain', 'idx', 'res_name', 'ins_code', 'value'}
+        assert isinstance(entry['idx'], int)
         assert entry.get('ins_code', "x") != ""
         assert (entry['value'] is None) or (0.0 <= entry['value'] <= 1.0)
-        keys.append((entry['chain'], entry['seq'], entry.get('ins_code', "")))
+        keys.append((entry['chain'], entry['idx'], entry.get('ins_code', "")))
+        assert entry['res_name'] == names[keys[-1]]
     assert len(keys) == len(set(keys))
 
     # on the author chains and numbers, insertion codes included, covering the structure
@@ -72,3 +89,13 @@ def test_track(out_dir, name):
     assert set(keys) == author_residues()
     assert any(key[2] for key in keys)
     assert sum(entry['value'] is not None for entry in track['values']) > 0.9*len(keys)
+
+
+@pytest.mark.parametrize('name', ["2ptc.cif.gz", "2ptc.cif"])
+def test_sha1sum_gzipped(tmp_path, name):
+    # the hash of the uncompressed bytes, also for a gzipped file without the suffix
+    with open(fixture, 'rb') as fs:
+        data = fs.read()
+    with gzip.open(tmp_path / name, 'wb') as fs:
+        fs.write(data)
+    assert sha1sum(tmp_path / name) == hashlib.sha1(data).hexdigest()
